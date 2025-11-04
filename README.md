@@ -106,13 +106,13 @@ A successful run is confirmed when:
 
 ## Outputs:
 1. Data Pipeline
-![alt text](<../screenshots/ecommerce_data_pipeline-graph (1).png>)
+![alt text](</screenshots/ecommerce_data_pipeline-graph (1).png>)
 
 2. Task Completion
-![alt text](<../screenshots/Screenshot 2025-11-04 at 6.19.23 PM.png>)
+![alt text](</screenshots/Screenshot 2025-11-04 at 6.19.23 PM.png>)
 
 3. Verification (successful run step 2 and 3):
-![alt text](<../screenshots/Screenshot 2025-11-04 at 6.34.45 PM.png>)
+![alt text](</screenshots/Screenshot 2025-11-04 at 6.34.45 PM.png>)
 This log verifies two things:
        1. The perform_pyspark_analysis task successfully ran and created the `data/customer_state_analysis/` directory (containing the final CSV).
        2. The subsequent cleanup task then successfully deleted the directory, fulfilling the cleanup requirement.
