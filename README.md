@@ -1,7 +1,7 @@
 # 🇧🇷 E-commerce Data Pipeline (Airflow, Pandas, PySpark, PostgreSQL)
 
 ## 🎯 Project Overview
-This project implements an end-to-end Extract, Transform, Load, and Analyze (ETLA) data pipeline using Apache Airflow. The goal is to process raw E-commerce data (Brazilian Olist datasets), standardize, merge, load it into a PostgreSQL data warehouse, and perform a final analysis using PySpark.
+This project implements an end-to-end Extract, Transform, Load, and Analyze (ETLA) data pipeline using Apache Airflow. The goal was to process raw E-commerce data (Brazilian Olist datasets), standardize, merge, load it into a PostgreSQL data warehouse, and perform a final analysis using PySpark.
 
 The pipeline leverages Airflow's TaskFlow API for efficient, parallel execution and uses intermediate Parquet files for fast data transfer between tasks.
 
@@ -12,10 +12,39 @@ The pipeline leverages Airflow's TaskFlow API for efficient, parallel execution 
 | **Airflow** | Orchestration | TaskFlow API (`@task` decorator) and TaskGroups. |
 | **Python/Pandas** | Ingestion & Transformation | Data reading, cleaning, merging, and writing to Parquet. |
 | **PostgreSQL** | Data Warehouse | Target database for final merged data (`ecommerce_merged_data`). |
-| **PySpark** | Advanced Analysis | Reads from Postgres, groups by customer state, and counts unique customers (Super Bonus). |
+| **PySpark** | Advanced Analysis | Reads from Postgres, groups by customer state, and counts unique customers  |
 | **Docker Compose** | Environment | Local development and deployment of Airflow, Postgres, and Redis services. |
 
 --- 
+
+## 📁 Project Folder Structure
+```
+.
+├── airflow-ecom-pipeline/
+│   ├── .devcontainer/           # VS Code Dev Container Configuration
+│   │   ├── devcontainer.json
+│   │   └── config/
+│   │       └── airflow.cfg
+│   ├── dags/
+│   │   ├── __pycache__/
+│   │   └── ecom_dag.py           # The main Airflow DAG definition
+│   ├── data/                   # Shared volume for source files and pipeline output
+│   │   ├── olist_customers_dataset.csv  # Source Data 1
+│   │   └── olist_orders_dataset.csv     # Source Data 2
+│   ├── logs/                   # Airflow runtime logs
+│   │   ├── dag_id=ecommerce_data_pipeline/
+│   │   └── ... (manual run logs)
+│   ├── plugins/
+│   ├── .Dockerfile             # Custom image to install Python/PySpark dependencies
+│   ├── .env                    # Environment variables for the Docker stack
+│   ├── db.env                  # Environment variables for the Postgres service
+│   ├── docker-compose.yaml     # Defines all services (Airflow, Postgres, Redis, etc.)
+│   ├── README.md               # This file!
+│   └── requirements.txt        # Python dependencies (pandas, pyarrow, pyspark, postgres-provider)
+└── .gitignore
+```
+
+---
 
 ## 🏗️ Pipeline Architecture (`dags/ecom_dag.py`)
 The DAG is divided into 5 distinct stages, emphasizing parallelism where possible:
@@ -29,42 +58,13 @@ The DAG is divided into 5 distinct stages, emphasizing parallelism where possibl
 
 ---
 
-## 🛠️ Setup and Installation
+## 🛠️ Setup 
 
-### Prerequisites
+### Building and Launching the Stack
 
-1.  Docker and Docker Compose installed.
-2.  The required Python libraries (`pandas`, `pyarrow`, `pyspark`, `apache-airflow-providers-postgres`, etc.) must be defined in your `requirements.txt`.
-3.  The necessary PySpark dependencies (like the Postgres JDBC driver) must be available in the container environment.
+Execute the following commands from project root:
 
-### 1. Data Placement
-
-Place the required CSV files into the **`data/`** directory on your host machine. This directory is volume-mounted to `/opt/airflow/data` inside the Airflow container.
-
-* `data/olist_customers_dataset.csv`
-* `data/olist_orders_dataset.csv`
-
-### 2. Airflow Connection Configuration (Crucial)
-
-Before running the DAG, the connection ID **`postgres_default`** must be configured in your Airflow UI or via environment variables in `docker-compose.yaml`.
-
-**Configuration Details:**
-
-| Field | Value |
-| :--- | :--- |
-| **Conn Id** | `postgres_default` |
-| **Conn Type** | `PostgreSQL` |
-| **Host** | `postgres` |
-| **Schema/Database** | `airflow` |
-| **Login** | `airflow` |
-| **Password** | `airflow` |
-| **Port** | `5432` |
-
-### 3. Build and Launch the Stack
-
-Execute the following commands from your project root:
-
-1.  **Stop and Clean (If running):**
+1.  **Stopping and Cleaning (If running):**
     ```bash
     docker compose down
     ```
@@ -72,10 +72,16 @@ Execute the following commands from your project root:
     ```bash
     docker compose build
     ```
-3.  **Start Services:**
+3.  **Starting the Services:**
     ```bash
     docker compose up -d
     ```
+
+### Execution in Airflow UI
+1. Access the Airflow UI at http://localhost:8080.
+2. Find the ecommerce_data_pipeline DAG.
+3. Toggle the switch to Unpause the DAG.
+4. Click the Trigger DAG button (the Play icon).
 
 ---
 
@@ -94,3 +100,10 @@ The pipeline should run without errors, performing the following key actions:
 * **Loading:** Creates the `ecommerce_merged_data` table in Postgres.
 * **Analysis:** Creates the directory `data/customer_state_analysis/` containing the unique customer count CSV results.
 * **Cleanup:** Deletes all intermediate Parquet files and the PySpark analysis directory content, leaving only the original CSV files.
+
+### Verification
+
+* A successful run is confirmed when:
+* The DAG Run status is Success (Green).
+* The output directory data/customer_state_analysis/ contains the final PySpark CSV result.
+* The intermediate files (*cleaned.parquet, merged*.parquet) in the data/ folder have been automatically deleted by the final cleanup task.

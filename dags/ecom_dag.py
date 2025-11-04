@@ -4,14 +4,15 @@ import logging
 import pandas as pd
 from datetime import datetime
 import os
-import glob  # For cleaning up PySpark output directory
-import shutil
+import glob
+import shutil  # Used for robust directory deletion
 
 from airflow.decorators import dag, task
 from airflow.models.baseoperator import chain
 from airflow.utils.task_group import TaskGroup
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from pyspark.sql import SparkSession  # Used for PySpark tasks
+from typing import Literal
 
 # --- Configuration ---
 # Set the base directory for shared data volume
@@ -65,6 +66,7 @@ def clean_customers(input_parquet_path: str) -> str:
     df["customer_city"] = df["customer_city"].str.upper()
     df["customer_state"] = df["customer_state"].str.upper()
 
+    # Overwrite the original ingestion file with the cleaned version
     df.to_parquet(input_parquet_path, index=False)
     logging.info("Customer data cleaning complete.")
     return input_parquet_path
@@ -72,15 +74,12 @@ def clean_customers(input_parquet_path: str) -> str:
 
 @task
 def clean_orders(input_parquet_path: str) -> str:
+    """Cleans and transforms date fields in the orders dataset, ensuring datetime types are correct."""
     import pandas as pd
-    import numpy as np
     import logging
 
     logging.info(f"Starting orders data cleaning on {input_parquet_path}")
     df = pd.read_parquet(input_parquet_path)
-
-    # Clean malformed rows: drop rows that are fully empty or missing order_id
-    df = df[df["order_id"].notna()]
 
     # Identify timestamp-like columns
     timestamp_cols = [
@@ -94,6 +93,7 @@ def clean_orders(input_parquet_path: str) -> str:
     # Convert safely to datetime
     for c in timestamp_cols:
         if c in df.columns:
+            # 'coerce' turns non-datetime values (like nulls) into NaT
             df[c] = pd.to_datetime(df[c], errors="coerce")
 
     # Fill null approvals with purchase timestamp
@@ -102,19 +102,21 @@ def clean_orders(input_parquet_path: str) -> str:
             df["order_purchase_timestamp"]
         )
 
-    # Explicitly cast to datetime64[ns] (removes tz & mixed types)
+    # Explicitly cast to datetime64[ns] (ensures consistent dtype for PyArrow)
     for c in timestamp_cols:
-        if c in df.columns:
-            df[c] = df[c].astype("datetime64[ns]")
+        if c in df.columns and pd.api.types.is_datetime64_any_dtype(df[c]):
+            # Remove timezone if present, and cast
+            df[c] = df[c].dt.tz_localize(None).astype("datetime64[ns]")
 
     # Optional: ensure status lowercase/consistent
-    df["order_status"] = df["order_status"].str.lower()
+    if "order_status" in df.columns:
+        df["order_status"] = df["order_status"].str.lower()
 
-    # Save clean version to a *new* file
-    cleaned_path = input_parquet_path.replace(".parquet", "_cleaned.parquet")
-    df.to_parquet(cleaned_path, index=False)
-    logging.info(f"Orders data cleaning complete. Saved to {cleaned_path}")
-    return cleaned_path
+    # Overwrite the original ingestion file with the cleaned version
+    df.to_parquet(input_parquet_path, index=False)
+    logging.info(f"Orders data cleaning complete. Overwrote {input_parquet_path}")
+    # Return the same path for downstream use
+    return input_parquet_path
 
 
 @task
@@ -158,58 +160,9 @@ def load_to_postgres(input_parquet_path: str, target_table: str):
     logging.info(f"Successfully loaded {len(df)} rows into table {target_table}.")
 
 
-# --- Stage 4: Data Analysis Task (Super Bonus - PySpark) ---
-
-'''
-@task
-def perform_pyspark_analysis(target_table: str, output_path: str):
-    """
-    Reads data from Postgres using PySpark, performs a simple analysis
-    (Unique Customers per State), and saves the result.
-    """
-    logging.info(f"Starting PySpark analysis on table: {target_table}")
-
-    # Initialize Spark Session (Configured for local use in the container)
-    spark = SparkSession.builder.appName("PostgresReadAnalysis").getOrCreate()
-
-    # Database connection properties (using the values from docker-compose.yaml)
-    jdbc_url = "jdbc:postgresql://postgres:5432/airflow"
-    db_properties = {
-        "user": "airflow",
-        "password": "airflow",
-        "driver": "org.postgresql.Driver",
-    }
-
-    # Read data from PostgreSQL
-    spark_df = spark.read.jdbc(
-        url=jdbc_url, table=target_table, properties=db_properties
-    )
-
-    # Analysis: Group by state and count unique customer IDs
-    analysis_df = spark_df.groupBy("customer_state").agg(
-        {"customer_unique_id": "count"}
-    )
-    analysis_df = analysis_df.withColumnRenamed(
-        "count(customer_unique_id)", "unique_customer_count"
-    )
-
-    # Sort and log a sample result
-    sorted_result = analysis_df.sort("unique_customer_count", ascending=False)
-    logging.info("--- Top 5 States by Unique Customers ---")
-    for row in sorted_result.limit(5).collect():
-        logging.info(
-            f"State: {row['customer_state']}, Count: {row['unique_customer_count']}"
-        )
-
-    # Save the result to the shared volume (PySpark creates a directory of files)
-    sorted_result.coalesce(1).write.mode("overwrite").csv(output_path, header=True)
-
-    spark.stop()
-    logging.info(f"PySpark analysis complete. Results saved to {output_path}")
-'''
+# --- Stage 4: Data Analysis Task (PySpark) ---
 
 
-# --- Updated perform_pyspark_analysis ---
 @task
 def perform_pyspark_analysis(target_table: str, output_path: str):
     """
@@ -222,6 +175,7 @@ def perform_pyspark_analysis(target_table: str, output_path: str):
     logging.info(f"Starting PySpark analysis on table: {target_table}")
 
     # Initialize Spark Session with JDBC driver
+    # NOTE: /opt/spark/jars/postgresql.jar must exist in the worker container
     spark = (
         SparkSession.builder.appName("PostgresReadAnalysis")
         .config("spark.jars", "/opt/spark/jars/postgresql.jar")
@@ -254,7 +208,7 @@ def perform_pyspark_analysis(target_table: str, output_path: str):
             f"State: {row['customer_state']}, Count: {row['unique_customer_count']}"
         )
 
-    # Save as single CSV
+    # Save as single CSV (creates a directory of files)
     analysis_df.coalesce(1).write.mode("overwrite").csv(output_path, header=True)
 
     spark.stop()
@@ -275,18 +229,21 @@ def cleanup_intermediate_files(
 
     import os
     import logging
+    import shutil
 
-    # Delete Parquet files
-    for f in [customers_cleaned_path, orders_cleaned_path, merged_path]:
+    # 1. Delete Parquet files (The final cleaned files and the merged file)
+    files_to_delete = [customers_cleaned_path, orders_cleaned_path, merged_path]
+    for f in files_to_delete:
         if os.path.exists(f):
             os.remove(f)
             logging.info(f"Deleted intermediate file: {f}")
         else:
             logging.warning(f"File not found for deletion: {f}")
 
-    # Delete PySpark output directory safely
+    # 2. Delete PySpark output directory safely (Requires shutil)
     if os.path.isdir(analysis_dir):
         try:
+            # Recursively delete the directory and its contents
             shutil.rmtree(analysis_dir)
             logging.info(f"Deleted PySpark analysis directory: {analysis_dir}")
         except Exception as e:
@@ -294,35 +251,6 @@ def cleanup_intermediate_files(
     else:
         logging.warning(f"Analysis directory not found: {analysis_dir}")
 
-
-'''
-def cleanup_intermediate_files(
-    customers_path: str, orders_path: str, merged_path: str, analysis_dir: str
-):
-    """Deletes intermediate Parquet files and the PySpark output directory."""
-
-    # 1. Delete Parquet files
-    files_to_delete = [customers_path, orders_path, merged_path]
-    for file_path in files_to_delete:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-            logging.info(f"Cleaned up intermediate file: {file_path}")
-        else:
-            logging.warning(f"File not found for cleanup: {file_path}")
-
-    # 2. Delete PySpark output directory (it's a directory, not a single file)
-    if os.path.isdir(analysis_dir):
-        # Delete all files/subdirectories within the output directory
-        for filename in glob.glob(os.path.join(analysis_dir, "*")):
-            if os.path.isfile(filename):
-                os.remove(filename)
-            elif os.path.isdir(filename):
-                os.rmdir(filename)
-        os.rmdir(analysis_dir)
-        logging.info(f"Cleaned up PySpark analysis directory: {analysis_dir}")
-    else:
-        logging.warning(f"Analysis directory not found for cleanup: {analysis_dir}")
-'''
 
 # --- DAG Definition ---
 
@@ -342,7 +270,6 @@ def cleanup_intermediate_files(
 def ecommerce_pipeline():
 
     # Stage 1: Data Ingestion (Parallel)
-    # The output of these tasks (the path strings) are implicitly XCom-pushed.
     ingested_cust_path = ingest_data.override(task_id="ingest_customers")(
         csv_path=CUSTOMERS_CSV, output_parquet_path=CLEANED_CUSTOMERS_PARQUET
     )
@@ -353,15 +280,13 @@ def ecommerce_pipeline():
     # Stage 2: Data Transformation (TaskGroup for Organization and Dependency Management)
     with TaskGroup("transform_data") as transform_group:
 
-        # Parallel Cleaning
+        # Parallel Cleaning: These variables now hold the final path after cleaning/overwriting
         cleaned_cust_path = clean_customers(ingested_cust_path)
+        # Note: clean_orders now also overwrites its input file (CLEANED_ORDERS_PARQUET)
         cleaned_order_path = clean_orders(ingested_order_path)
 
         # Merge (must wait for both cleaning tasks via dependency inheritance)
         merged_path = merge_data(cleaned_cust_path, cleaned_order_path)
-
-        # Set the TaskGroup output to the path of the final merged file
-        # transform_group.set_upstream([cleaned_cust_path, cleaned_order_path])
 
     # Stage 3: Data Loading
     load_task = load_to_postgres(merged_path, target_table=TARGET_TABLE)
@@ -372,11 +297,13 @@ def ecommerce_pipeline():
     )
 
     # Stage 5: Cleanup
+    # CRITICAL FIX: The cleanup task MUST take the output of the tasks that created the files it needs to delete.
+    # The cleaned_cust_path and cleaned_order_path contain the *final* Parquet paths used by merge_data.
     cleanup_task = cleanup_intermediate_files(
-        ingested_cust_path,
-        ingested_order_path,
-        merged_path,  # Path from the merge_data task
-        analysis_dir=ANALYSIS_OUTPUT_DIR,  # PySpark output dir
+        customers_cleaned_path=cleaned_cust_path,
+        orders_cleaned_path=cleaned_order_path,
+        merged_path=merged_path,
+        analysis_dir=ANALYSIS_OUTPUT_DIR,
     )
 
     # Define the final pipeline structure
