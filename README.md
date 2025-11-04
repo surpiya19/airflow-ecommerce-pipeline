@@ -77,17 +77,9 @@ Execute the following commands from project root:
     docker compose up -d
     ```
 
-### Execution in Airflow UI
-1. Access the Airflow UI at http://localhost:8080.
-2. Find the ecommerce_data_pipeline DAG.
-3. Toggle the switch to Unpause the DAG.
-4. Click the Trigger DAG button (the Play icon).
+### ▶️ Execution
 
----
-
-## ▶️ Execution
-
-1.  **Access Airflow UI:** Navigate to `http://localhost:8080` (or your configured port).
+1.  **Access Airflow UI:** Navigate to `http://localhost:8080` (or your configured port). [depending on the ports]
 2.  **Unpause the DAG:** Locate `ecommerce_data_pipeline` and toggle the switch ON.
 3.  **Trigger the Run:** Click the "Play" icon to trigger a manual run.
 
@@ -101,9 +93,26 @@ The pipeline should run without errors, performing the following key actions:
 * **Analysis:** Creates the directory `data/customer_state_analysis/` containing the unique customer count CSV results.
 * **Cleanup:** Deletes all intermediate Parquet files and the PySpark analysis directory content, leaving only the original CSV files.
 
-### Verification
+---
 
-* A successful run is confirmed when:
+## ✅ Verification
+
+A successful run is confirmed when:
 * The DAG Run status is Success (Green).
 * The output directory data/customer_state_analysis/ contains the final PySpark CSV result.
 * The intermediate files (*cleaned.parquet, merged*.parquet) in the data/ folder have been automatically deleted by the final cleanup task.
+
+---
+
+## Outputs:
+1. Data Pipeline
+![alt text](<../screenshots/ecommerce_data_pipeline-graph (1).png>)
+
+2. Task Completion
+![alt text](<../screenshots/Screenshot 2025-11-04 at 6.19.23 PM.png>)
+
+3. Verification (successful run step 2 and 3):
+![alt text](<../screenshots/Screenshot 2025-11-04 at 6.34.45 PM.png>)
+This log verifies two things:
+       1. The perform_pyspark_analysis task successfully ran and created the `data/customer_state_analysis/` directory (containing the final CSV).
+       2. The subsequent cleanup task then successfully deleted the directory, fulfilling the cleanup requirement.
