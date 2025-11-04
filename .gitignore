@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs
+logs/
+*.log
+
+# Data files (optional if too large)
+data/*.csv
+data/*.parquet
+
+# Environment files
+.env
+db.env
+
+# Docker-related
+*.env
