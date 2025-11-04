@@ -1,0 +1,22 @@
+{
+       "name": "Airflow Development",
+       // Use the service name defined in your docker-compose.yaml 
+       "service": "airflow-scheduler",
+       "workspaceFolder": "/opt/airflow",
+       // Tell VS Code to wait for this service to be up
+       "dockerComposeFile": [
+              "../docker-compose.yaml"
+       ],
+       "shutdownAction": "none",
+       "postStartCommand": "pip install -r requirements.txt", // Ensures dependencies are ready if needed
+       // Ports you might need to forward
+       "forwardPorts": [
+              8080,
+              5555
+       ],
+       // Extensions to install in the container (e.g., Python, YAML)
+       "extensions": [
+              "ms-python.python",
+              "redhat.vscode-yaml"
+       ]
+}
